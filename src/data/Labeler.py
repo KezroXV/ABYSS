@@ -1,40 +1,46 @@
+import re
 import pandas as pd
 import os
 import json
 
 # Liste des keywords qui indiquent un "fix commit"
 FIX_KEYWORDS = [
-    'fix', 'bug', 'issue', 'error', 'crash', 'fail',
-    'patch', 'hotfix', 'correct', 'resolve', 'closes',
-    'repair', 'broken', 'defect', 'problem', 'revert'
+    'fix', 'bug', 'hotfix', 'patch',
+    'regression', 'crash', 'error',
+    'defect', 'broken'
 ]
 
 def is_fix_commit(message):
+    if not isinstance(message, str):
+        return False
+    
     message = message.lower()
+    message = re.sub(r'[^a-z0-9]+', ' ', message)
+    words = message.split()
     
     for keyword in FIX_KEYWORDS:
-      if keyword in message:
-        return True
-      else:
-        return False
+        if keyword in words:
+            return True
     return False
 
-# Tests à la fin du fichier
+def label_commits(commits_df):
+    commits_df['introduced_bug'] = 0
+    for i in range(1,len(commits_df)):
+        if is_fix_commit(commits_df.loc[i,'message']) == True:
+            commits_df.loc[i - 1, 'introduced_bug'] = 1
+    return commits_df
+
+def main():
+  df = pd.read_csv("data/raw/commits.csv")
+  fix_flags = df["message"].astype(str).str.lower().apply(is_fix_commit)
+  print(f"Fix commits détectés: {fix_flags.sum()} / {len(df)} "
+        f"({100 * fix_flags.sum() / len(df):.1f}%)")
+  df = label_commits(df)
+  os.makedirs("data/processed", exist_ok=True)
+  df.to_csv("data/processed/commits_labeled.csv", index=False)
+  print( (df['introduced_bug'] == 1).sum())
+  total = len(df)
+  print(f"Total: {total}, Buggy: {(df['introduced_bug'] == 1).sum()}, Bug rate: {100 * (df['introduced_bug'] == 1).sum() / total:.1f}%")
+
 if __name__ == "__main__":
-    # Test 1: Fix commit
-    assert is_fix_commit("fix: authentication bug") == True
-    print("✓ Test 1 passed")
-    
-    # Test 2: Fix avec majuscule
-    assert is_fix_commit("Fix crash on startup") == True
-    print("✓ Test 2 passed")
-    
-    # Test 3: Pas un fix
-    assert is_fix_commit("add new login page") == False
-    print("✓ Test 3 passed")
-    
-    # Test 4: Hotfix
-    assert is_fix_commit("hotfix: security issue") == True
-    print("✓ Test 4 passed")
-    
-    print("🎉 All tests passed!")
+    main()
