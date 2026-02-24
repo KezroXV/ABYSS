@@ -32,6 +32,10 @@ def label_commits(commits_df):
 
 def main():
   df = pd.read_csv("data/raw/commits.csv")
+  df["date"] = pd.to_datetime(df["date"], errors="coerce")
+  df = df[df["date"].notna()]
+  df = df.sort_values("date").reset_index(drop=True)
+
   fix_flags = df["message"].astype(str).str.lower().apply(is_fix_commit)
   print(f"Fix commits détectés: {fix_flags.sum()} / {len(df)} "
         f"({100 * fix_flags.sum() / len(df):.1f}%)")
