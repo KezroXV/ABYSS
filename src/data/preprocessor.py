@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 import datetime
-
+from git_parser import get_commit_metrics
 class DataPreprocessor:
 
     def __init__(self):
@@ -31,11 +31,26 @@ class DataPreprocessor:
         print(f"temp features extracted")
         return df
     
-    def add_commit_metrics(self, df):
-        df['total_lines_changed'] =np.random.randint(1,500, size=len(df))
-        df['files_changed'] = np.random.randint(1,20, size=len(df))
+    def add_commit_metrics(self, df, repo_url, github_token):
+        results = []
+
+        for i, row in df.iterrows():
+            sha = row['sha']
+            print(f"[{i+1}/{len(df)}] Fetching metrics for {sha[:7]}...")
+
+            metrics = get_commit_metrics(repo_url, sha, github_token)
+            results.append(metrics)
+
+        metrics_df = pd.DataFrame(results)
+
+        df['files_changed'] = metrics_df['files_changed'].values
+        df['lines_added'] = metrics_df['lines_added'].values
+        df['lines_removed'] = metrics_df['lines_removed'].values
+        df['total_lines_changed'] = df['lines_added'] + df['lines_removed']
+        df['avg_cyclomatic_complexity'] = metrics_df['avg_cyclomatic_complexity'].values
         df['is_large_commit'] = (df['total_lines_changed'] > 200).astype(int)
-        print(f"commit metrics added")
+
+        print(f"Commit metrics added (real data)")
         return df
     
     def save_clean_data(self,df, filepath):
@@ -45,10 +60,14 @@ class DataPreprocessor:
         return df
 
     def main(self):
+        token = os.getenv("GITHUB_TOKEN")
+        repo_url = "https://github.com/facebook/react"
+
         df = self.load_data("data/processed/commits_labeled.csv")
+        df = df.head(20)  
         df = self.clean_data(df)
         df = self.extract_temporal_features(df)
-        df = self.add_commit_metrics(df)
+        df = self.add_commit_metrics(df, repo_url, token)
         self.save_clean_data(df, "data/processed/commits_clean.csv")
         print(df.head())
         print(df.info())
