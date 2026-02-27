@@ -3,6 +3,8 @@ import numpy as np
 import os
 import datetime
 from git_parser import get_commit_metrics
+from dotenv import load_dotenv
+load_dotenv()
 class DataPreprocessor:
 
     def __init__(self):
