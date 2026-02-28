@@ -65,8 +65,7 @@ class DataPreprocessor:
         token = os.getenv("GITHUB_TOKEN")
         repo_url = "https://github.com/facebook/react"
 
-        df = self.load_data("data/processed/commits_labeled.csv")
-        df = df.head(20)  
+        df = self.load_data("data/processed/commits_hybrid_labeled.csv")
         df = self.clean_data(df)
         df = self.extract_temporal_features(df)
         df = self.add_commit_metrics(df, repo_url, token)
