@@ -43,7 +43,7 @@ if __name__ == "__main__":
         "data/processed/commits_szz_labeled.csv"
     )
 
-    df = apply_hybrid_label(df, rule="or")
+    df = apply_hybrid_label(df, rule="and")
 
     print("Distribution hybrid :")
     print(df["introduced_bug_hybrid"].value_counts())

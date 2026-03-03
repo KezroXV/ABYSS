@@ -30,8 +30,9 @@ def label_commits(commits_df):
             commits_df.loc[i - 1, 'introduced_bug'] = 1
     return commits_df
 
+
 def main():
-  df = pd.read_csv("data/raw/commits.csv")
+  df = pd.read_csv("data/raw/commits_all_repos.csv")
   df["date"] = pd.to_datetime(df["date"], errors="coerce")
   df = df[df["date"].notna()]
   df = df.sort_values("date").reset_index(drop=True)
