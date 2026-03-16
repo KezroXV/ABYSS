@@ -5,9 +5,9 @@ import json
 
 # Liste des keywords qui indiquent un "fix commit"
 FIX_KEYWORDS = [
-    'fix', 'bug', 'hotfix', 'patch',
-    'regression', 'crash', 'error',
-    'defect', 'broken'
+    "fix", "bug", "hotfix", "bugfix",
+    "regression", "crash", "error", "broken",
+    "fixes #", "fix #", "closes #", "resolves #"
 ]
 
 def is_fix_commit(message):
