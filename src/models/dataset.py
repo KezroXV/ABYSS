@@ -2,17 +2,19 @@ import pandas as pd
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-
+import os
 SEQUENCE_LENGTH = 20
-LABEL_COL = "introduced_bug_hybrid"
+LABEL_COL = "introduced_bug_szz"  # au lieu de introduced_bug_hybrid pour tester le modèle
 EXCLUDE_COLS = ["repo", "sha", "message", "author", "date",
-                "introduced_bug", "introduced_bug_szz",
-                "introduced_bug_hybrid"]
+                "introduced_bug", "introduced_bug_szz", "introduced_bug_hybrid",
+                "message_length", "message_word_count",
+                "is_short_message", "has_urgent_keyword"]
 
 def get_feature_columns(df):
-    return [col for col in df.columns if col not in EXCLUDE_COLS]
-
-
+    tfidf_cols = [col for col in df.columns if col.startswith("tfidf_")]
+    return [col for col in df.columns 
+            if col not in EXCLUDE_COLS and col not in tfidf_cols]
+            
 class CommitSequenceDataset(Dataset):
     def __init__(self, csv_path):
         df = pd.read_csv(csv_path)

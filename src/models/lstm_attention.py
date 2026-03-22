@@ -17,21 +17,22 @@ class AttentionLayer(nn.Module):
 class BiLSTMAttention(nn.Module):
     def __init__(self, input_size, hidden_size=128, num_layers=2, dropout=0.3):
         super(BiLSTMAttention, self).__init__()
-        
-        self.batch_norm = nn.BatchNorm1d(input_size)
-        
+
+        # Input projection au lieu de BatchNorm
+        self.input_projection = nn.Linear(input_size, hidden_size)
+        self.input_activation = nn.ReLU()
+
         self.lstm = nn.LSTM(
-            input_size=input_size,
+            input_size=hidden_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
             batch_first=True,
             bidirectional=True,
             dropout=dropout if num_layers > 1 else 0
         )
-        
-        # x2 car bidirectionnel
+
         self.attention = AttentionLayer(hidden_size * 2)
-        
+
         self.classifier = nn.Sequential(
             nn.Linear(hidden_size * 2, 64),
             nn.ReLU(),
@@ -39,27 +40,27 @@ class BiLSTMAttention(nn.Module):
             nn.Linear(64, 1),
             nn.Sigmoid()
         )
-    
+
     def forward(self, x):
         # x : (batch, seq_len, input_size)
         batch_size, seq_len, input_size = x.shape
-        
-        # BatchNorm sur les features
-        x = x.view(-1, input_size)
-        x = self.batch_norm(x)
-        x = x.view(batch_size, seq_len, input_size)
-        
-        # Bi-LSTM
-        lstm_out, _ = self.lstm(x)   # (batch, seq_len, hidden*2)
-        
-        # Attention
-        context, weights = self.attention(lstm_out)  # (batch, hidden*2)
-        
-        # Classification
-        output = self.classifier(context)  # (batch, 1)
-        
-        return output.squeeze(1), weights
 
+        # Projeter chaque commit dans un espace plus riche
+        x = x.view(-1, input_size)
+        x = self.input_projection(x)
+        x = self.input_activation(x)
+        x = x.view(batch_size, seq_len, -1)
+
+        # Bi-LSTM
+        lstm_out, _ = self.lstm(x)
+
+        # Attention
+        context, weights = self.attention(lstm_out)
+
+        # Classification
+        output = self.classifier(context)
+
+        return output.squeeze(1), weights
 
 if __name__ == "__main__":
     # Test rapide

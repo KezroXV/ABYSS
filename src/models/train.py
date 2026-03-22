@@ -4,23 +4,24 @@ from torch.utils.data import DataLoader
 import numpy as np
 import os
 import sys
+import json
 
+# ← sys.path AVANT les imports src
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from src.models.dataset import CommitSequenceDataset
+from src.models.dataset import CommitSequenceDataset, SEQUENCE_LENGTH, LABEL_COL
 from src.models.lstm_attention import BiLSTMAttention
 
-INPUT_SIZE    = 74
-HIDDEN_SIZE   = 128
+INPUT_SIZE    = 20
+HIDDEN_SIZE   = 64
 NUM_LAYERS    = 2
-DROPOUT       = 0.4
+DROPOUT       = 0.3
 BATCH_SIZE    = 32
-EPOCHS        = 30
-LEARNING_RATE = 1e-3
+EPOCHS        = 50
+LEARNING_RATE = 5e-4
 DEVICE        = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-#  FOCAL LOSS 
 class FocalLoss(nn.Module):
     def __init__(self, alpha=0.25, gamma=2.0):
         super(FocalLoss, self).__init__()
@@ -34,7 +35,6 @@ class FocalLoss(nn.Module):
         return focal.mean()
 
 
-# TRAIN 
 def train_one_epoch(model, loader, optimizer, criterion):
     model.train()
     total_loss = 0
@@ -45,14 +45,13 @@ def train_one_epoch(model, loader, optimizer, criterion):
         output, _ = model(x)
         loss = criterion(output, y)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # ← AJOUTE ÇA
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         total_loss += loss.item()
 
     return total_loss / len(loader)
 
 
-# EVALUATE 
 def evaluate(model, loader, criterion):
     model.eval()
     total_loss = 0
@@ -69,22 +68,20 @@ def evaluate(model, loader, criterion):
             all_labels.extend(y.cpu().numpy())
 
     all_preds_proba = np.array(all_preds_proba)
-    all_labels = np.array(all_labels)
+    all_labels      = np.array(all_labels)
 
-    # Tester plusieurs seuils et garder le meilleur F1
     best_f1, best_threshold = 0, 0.5
     for threshold in np.arange(0.1, 0.9, 0.05):
-        preds = (all_preds_proba >= threshold).astype(float)
-        tp = ((preds == 1) & (all_labels == 1)).sum()
-        fp = ((preds == 1) & (all_labels == 0)).sum()
-        fn = ((preds == 0) & (all_labels == 1)).sum()
+        preds     = (all_preds_proba >= threshold).astype(float)
+        tp        = ((preds == 1) & (all_labels == 1)).sum()
+        fp        = ((preds == 1) & (all_labels == 0)).sum()
+        fn        = ((preds == 0) & (all_labels == 1)).sum()
         precision = tp / (tp + fp + 1e-8)
         recall    = tp / (tp + fn + 1e-8)
         f1        = 2 * precision * recall / (precision + recall + 1e-8)
         if f1 > best_f1:
             best_f1, best_threshold = f1, threshold
 
-    # Recalculer les métriques avec le meilleur seuil
     preds     = (all_preds_proba >= best_threshold).astype(float)
     tp        = ((preds == 1) & (all_labels == 1)).sum()
     fp        = ((preds == 1) & (all_labels == 0)).sum()
@@ -94,7 +91,8 @@ def evaluate(model, loader, criterion):
     f1        = 2 * precision * recall / (precision + recall + 1e-8)
 
     return total_loss / len(loader), f1, precision, recall, best_threshold
-# MAIN 
+
+
 def main():
     print(f"Device : {DEVICE}")
 
@@ -114,37 +112,66 @@ def main():
         dropout=DROPOUT
     ).to(DEVICE)
 
-    criterion = FocalLoss(alpha=0.75, gamma=2.0)  
+    criterion = FocalLoss(alpha=0.25, gamma=2.0)
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="max", patience=3, factor=0.5
+        optimizer, mode="max", factor=0.5
     )
 
-    best_f1 = 0
+    best_f1        = 0
+    best_threshold = 0.5
+    patience       = 7      # arrêter si pas d'amélioration pendant 7 epochs
+    no_improve     = 0       # compteur d'epochs sans amélioration
     os.makedirs("models", exist_ok=True)
 
     print("\nEntraînement...\n")
 
     for epoch in range(1, EPOCHS + 1):
-        train_loss             = train_one_epoch(model, train_loader, optimizer, criterion)
-        val_loss, f1, precision, recall, best_threshold = evaluate(model, val_loader, criterion)
+        train_loss = train_one_epoch(model, train_loader, optimizer, criterion)
+        val_loss, f1, precision, recall, threshold = evaluate(model, val_loader, criterion)
 
         scheduler.step(f1)
 
         print(f"Epoch {epoch:02d}/{EPOCHS} | "
-            f"Train Loss: {train_loss:.4f} | "
-            f"Val Loss: {val_loss:.4f} | "
-            f"F1: {f1:.4f} | "
-            f"Precision: {precision:.4f} | "
-            f"Recall: {recall:.4f} | "
-            f"Threshold: {best_threshold:.2f}")
+              f"Train Loss: {train_loss:.4f} | "
+              f"Val Loss: {val_loss:.4f} | "
+              f"F1: {f1:.4f} | "
+              f"Precision: {precision:.4f} | "
+              f"Recall: {recall:.4f} | "
+              f"Threshold: {threshold:.2f}")
 
         if f1 > best_f1:
-            best_f1 = f1
-            torch.save(model.state_dict(), "models/best_model.pt")
-            print(f"  Meilleur modèle sauvegardé (F1={f1:.4f})")
+            best_f1        = f1
+            best_threshold = threshold
+            no_improve     = 0  # reset le compteur
 
-    print(f"\nEntraînement terminé. Meilleur F1 : {best_f1:.4f}")
+            torch.save(model.state_dict(), "models/best_model.pt")
+
+            metadata = {
+                "best_f1":         float(f1),
+                "best_threshold":  float(threshold),
+                "precision":       float(precision),
+                "recall":          float(recall),
+                "epoch":           epoch,
+                "input_size":      INPUT_SIZE,
+                "hidden_size":     HIDDEN_SIZE,
+                "num_layers":      NUM_LAYERS,
+                "dropout":         DROPOUT,
+                "sequence_length": SEQUENCE_LENGTH,
+                "feature_cols":    train_dataset.feature_cols,
+                "label_col":       LABEL_COL
+            }
+            with open("models/model_metadata.json", "w") as f:
+                json.dump(metadata, f, indent=2)
+
+            print(f"   Meilleur modèle sauvegardé (F1={f1:.4f}, Threshold={threshold:.2f})")
+
+        else:
+            no_improve += 1
+            print(f"   Pas d'amélioration ({no_improve}/{patience})")
+            if no_improve >= patience:
+                print(f"\n Early stopping à l'epoch {epoch}")
+                break
 
 
 if __name__ == "__main__":
