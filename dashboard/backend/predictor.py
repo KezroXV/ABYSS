@@ -174,3 +174,112 @@ def predict_commit(repo_url: str, sha: str, github_token: str):
         }
     }
 
+def predict_history(repo_url: str, github_token: str, limit: int = 50):
+    owner, repo = parse_github_url(repo_url)
+    seq_len     = metadata["sequence_length"]
+
+    # 1. Récupérer plus de commits que demandé pour avoir l'historique
+    url      = f"https://api.github.com/repos/{owner}/{repo}/commits"
+    headers  = {"Authorization": f"token {github_token}"}
+    params   = {"per_page": limit + seq_len}
+    response = requests.get(url, headers=headers, params=params)
+
+    if response.status_code != 200:
+        raise Exception(f"GitHub API error: {response.status_code}")
+
+    all_commits = response.json()
+
+    # 2. Fetch les métriques de TOUS les commits en parallèle
+    def fetch_metrics(c):
+        try:
+            return c["sha"], get_commit_metrics(repo_url, c["sha"], github_token)
+        except:
+            return c["sha"], {"files_changed": 0, "lines_added": 0, 
+                              "lines_removed": 0, "avg_cyclomatic_complexity": 0.0}
+
+    print(f"Fetching métriques pour {len(all_commits)} commits...")
+    metrics_map = {}
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(fetch_metrics, c): c for c in all_commits}
+        done    = 0
+        for future in as_completed(futures):
+            done += 1
+            sha, metrics = future.result()
+            metrics_map[sha] = metrics
+            print(f"  [{done}/{len(all_commits)}] métriques fetchées")
+
+    # 3. Construire les vecteurs pour tous les commits
+    vectors_map = {}
+    for c in all_commits:
+        sha = c["sha"]
+        if sha in metrics_map:
+            vectors_map[sha] = commit_to_feature_vector(c, metrics_map[sha])
+
+    # 4. Construire les séquences — on utilise les vrais commits précédents
+    # all_commits est trié du plus récent au plus ancien
+    # Pour le commit i, ses précédents sont les commits i+1, i+2, ... (plus anciens)
+    results = []
+    for i, c in enumerate(all_commits[:limit]):
+        sha = c["sha"]
+        if sha not in vectors_map:
+            continue
+
+        # Prendre les seq_len-1 commits précédents (plus anciens = indices i+1 à i+seq_len)
+        prev_commits = all_commits[i+1 : i+seq_len]
+        
+        sequence_vectors = [
+            vectors_map[pc["sha"]]
+            for pc in reversed(prev_commits)  # du plus ancien au plus récent
+            if pc["sha"] in vectors_map
+        ]
+
+        # Ajouter le commit courant en dernier
+        sequence_vectors.append(vectors_map[sha])
+
+        # Compléter si pas assez
+        while len(sequence_vectors) < seq_len:
+            sequence_vectors.insert(0, np.zeros(20, dtype=np.float32))
+
+        sequence = np.array(sequence_vectors[-seq_len:], dtype=np.float32)
+
+        # Prédiction
+        threshold = metadata["best_threshold"]
+        x         = torch.tensor(sequence, dtype=torch.float32).unsqueeze(0).to(DEVICE)
+        model.eval()
+        with torch.no_grad():
+            output, _ = model(x)
+
+        score    = float(output.item())
+        date_str = c.get("commit", {}).get("author", {}).get("date", "")
+        author   = c.get("commit", {}).get("author", {}).get("name", "Unknown")
+        m        = metrics_map[sha]
+
+        results.append({
+            "sha":        sha,
+            "sha_short":  sha[:7],
+            "author":     author,
+            "date":       date_str,
+            "message":    c.get("commit", {}).get("message", "")[:80],
+            "risk_score": round(score, 4),
+            "risk_level": "high" if score >= 0.45 else "medium" if score >= threshold else "low",
+            "metrics": {
+                "files_changed": m["files_changed"],
+                "lines_added":   m["lines_added"],
+                "lines_removed": m["lines_removed"],
+                "total_lines":   m["lines_added"] + m["lines_removed"],
+            }
+        })
+
+    results.sort(key=lambda x: x["date"], reverse=True)
+
+    scores     = [r["risk_score"] for r in results]
+    high_count = sum(1 for r in results if r["risk_level"] == "high")
+    avg_score  = round(sum(scores) / len(scores), 4) if scores else 0
+
+    return {
+        "repo":      repo_url,
+        "total":     len(results),
+        "avg_score": avg_score,
+        "high_risk": high_count,
+        "commits":   results,
+    }

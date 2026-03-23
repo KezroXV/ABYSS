@@ -8,7 +8,7 @@ from pydantic import BaseModel
 load_dotenv()
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from dashboard.backend.predictor import predict_commit, load
+from dashboard.backend.predictor import predict_commit, load, predict_history
 
 app = FastAPI(title="ABYSS API", description="Bug risk prediction for any Git commit")
 
@@ -58,3 +58,15 @@ def predict(req: PredictRequest):
 @app.get("/health")
 def health():
     return {"status": "ok", "model": "BiLSTM-Attention", "version": "1.0"}
+
+@app.get("/history")
+def history(repo_url: str, limit: int = 50):
+    try:
+        result = predict_history(
+            repo_url=repo_url,
+            github_token=GITHUB_TOKEN,
+            limit=min(limit, 100)
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
