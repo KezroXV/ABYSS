@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 from sklearn.feature_extraction.text import TfidfVectorizer
 from dotenv import load_dotenv
+import json as _json
 
 load_dotenv()
 
@@ -124,30 +125,54 @@ def add_code_features(df):
     print("Code features ajoutées")
     return df
 
+def add_codebert_features(df, embeddings_path="data/processed/commit_embeddings.json"):
+    if not os.path.exists(embeddings_path):
+        print("No embeddings found, skipping CodeBERT features.")
+        return df
+
+    with open(embeddings_path, "r") as f:
+        embeddings = _json.load(f)
+
+    print(f"Merging CodeBERT embeddings ({len(embeddings)} available)...")
+
+    n_dims   = 768
+    emb_cols = [f"codebert_{i}" for i in range(n_dims)]
+
+    emb_matrix = []
+    for sha in df["sha"]:
+        if sha in embeddings:
+            emb_matrix.append(embeddings[sha])
+        else:
+            emb_matrix.append([0.0] * n_dims)
+
+    emb_df = pd.DataFrame(emb_matrix, columns=emb_cols, index=df.index)
+    df     = pd.concat([df.reset_index(drop=True), emb_df.reset_index(drop=True)], axis=1)
+
+    print(f"CodeBERT features added ({n_dims} dimensions)")
+    return df
+
 def run_feature_engineering(input_path, output_path):
-    print("Chargement des données...")
+    print("Loading data...")
     df = pd.read_csv(input_path)
-    print(f"Commits chargés : {len(df)}")
-    
-    # Fusionner avec les métriques de code depuis commits_clean.csv
+    print(f"Commits loaded: {len(df)}")
+
     df_metrics = pd.read_csv("data/processed/commits_clean.csv")
-    df_metrics = df_metrics[["sha", "files_changed", "lines_added", 
-                              "lines_removed", "total_lines_changed", 
+    df_metrics = df_metrics[["sha", "files_changed", "lines_added",
+                              "lines_removed", "total_lines_changed",
                               "avg_cyclomatic_complexity"]]
     df = pd.merge(df, df_metrics, on="sha", how="left")
-    print(f"Métriques de code fusionnées")
-    
+
     df = add_temporal_features(df)
     df = add_author_features(df)
     df = add_message_features(df)
     df = add_tfidf_features(df, n_features=50)
     df = add_code_features(df)
-    
+    df = add_codebert_features(df)
+
     os.makedirs("data/processed", exist_ok=True)
     df.to_csv(output_path, index=False)
-    print(f"\nDataset final : {len(df)} commits, {len(df.columns)} features")
-    print(f"Sauvegardé dans {output_path}")
-    
+    print(f"\nFinal dataset: {len(df)} commits, {len(df.columns)} features")
+    print(f"Saved to {output_path}")
     return df
 
 if __name__ == "__main__":

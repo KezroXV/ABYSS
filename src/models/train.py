@@ -12,7 +12,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 from src.models.dataset import CommitSequenceDataset, SEQUENCE_LENGTH, LABEL_COL
 from src.models.lstm_attention import BiLSTMAttention
 
-INPUT_SIZE    = 20
+INPUT_SIZE = 788   # 20 features numériques + 768 CodeBERT
 HIDDEN_SIZE   = 64
 NUM_LAYERS    = 2
 DROPOUT       = 0.3
