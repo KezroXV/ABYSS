@@ -35,11 +35,20 @@ def _tensor_sequence(seq):
 
 
 def grad_times_input_per_timestep(model, seq):
+    was_training = model.training
+    model.eval()
     x = _tensor_sequence(seq)
     x.requires_grad_(True)
-    out, _ = model(x)
-    out.backward()
+
+    # cuDNN RNN backward is not supported in eval mode on some GPU setups.
+    # Disable cuDNN for this attribution pass to ensure gradients are available.
+    with torch.backends.cudnn.flags(enabled=False):
+        out, _ = model(x)
+        out.sum().backward()
+
     g = (x.grad * x).squeeze(0).detach().cpu().numpy()
+    if was_training:
+        model.train()
     return g
 
 
