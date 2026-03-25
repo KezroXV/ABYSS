@@ -4,11 +4,13 @@ import os
 import json
 import time
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# ─── CONFIG ───────────────────────────────────────────────
+# CONFIG
 CHECKPOINT_PATH = "data/processed/szz_checkpoint.json"
 OUTPUT_PATH     = "data/processed/commits_szz_labeled.csv"
 LOG_PATH        = "data/processed/szz_log.txt"
@@ -24,12 +26,13 @@ IGNORE_EXTENSIONS = [
 ]
 
 MAX_LINES_PER_FILE = 400
+MAX_WORKERS        = 5   # ← Ajuste selon ton token (5 = safe, 10 = GitHub App)
 
-# ─── LOGGING ──────────────────────────────────────────────
+# LOGGING 
 os.makedirs("data/processed", exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(message)s",
+    format="%(asctime)s  %(message)s",
     datefmt="%H:%M:%S",
     handlers=[
         logging.FileHandler(LOG_PATH, encoding="utf-8"),
@@ -38,7 +41,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ─── CHECKPOINT ───────────────────────────────────────────
+# CHECKPOINT
 def load_checkpoint():
     if os.path.exists(CHECKPOINT_PATH):
         with open(CHECKPOINT_PATH, "r") as f:
@@ -48,6 +51,7 @@ def load_checkpoint():
         return set(data["guilty_shas"]), set(data["processed_shas"])
     return set(), set()
 
+
 def save_checkpoint(guilty_shas, processed_shas):
     with open(CHECKPOINT_PATH, "w") as f:
         json.dump({
@@ -55,12 +59,13 @@ def save_checkpoint(guilty_shas, processed_shas):
             "processed_shas": list(processed_shas)
         }, f)
 
+
 def clear_checkpoint():
     if os.path.exists(CHECKPOINT_PATH):
         os.remove(CHECKPOINT_PATH)
         log.info("Checkpoint supprimé")
 
-# ─── RATE LIMIT ───────────────────────────────────────────
+# RATE LIMIT 
 def safe_get(url, headers, retries=3):
     for attempt in range(retries):
         response = requests.get(url, headers=headers)
@@ -77,6 +82,7 @@ def safe_get(url, headers, retries=3):
             time.sleep(3)
     return None
 
+
 def safe_post(url, headers, payload, retries=3):
     for attempt in range(retries):
         response = requests.post(url, json=payload, headers=headers)
@@ -91,9 +97,10 @@ def safe_post(url, headers, payload, retries=3):
             time.sleep(3)
     return None
 
-# ─── CORE FUNCTIONS ───────────────────────────────────────
+# CORE FUNCTIONS 
 def is_fix_commit(message):
     return any(k in str(message).lower() for k in FIX_KEYWORDS)
+
 
 def parse_removed_lines(patch):
     removed = []
@@ -111,6 +118,7 @@ def parse_removed_lines(patch):
         elif not line.startswith("+"):
             current_line += 1
     return removed
+
 
 def get_fix_details(owner, repo, sha, github_token):
     url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}"
@@ -145,6 +153,7 @@ def get_fix_details(owner, repo, sha, github_token):
             files_lines.append((path, removed_lines[:MAX_LINES_PER_FILE]))
 
     return parent_sha, files_lines
+
 
 def get_blame_sha(owner, repo, parent_sha, file_path, line_numbers, github_token):
     query = """
@@ -196,52 +205,91 @@ def get_blame_sha(owner, repo, parent_sha, file_path, line_numbers, github_token
 
     return guilty_shas
 
-# ─── MAIN PIPELINE ────────────────────────────────────────
+# WORKER
+def process_fix_commit(owner, repo, row, github_token):
+    """
+    Traite un seul fix commit : récupère le parent + blame.
+    Retourne (sha, set_of_guilty_shas).
+    Appelé en parallèle depuis get_szz_guilty_shas.
+    """
+    sha = row["sha"]
+    log.info(f"   {sha[:7]} ({owner}/{repo})")
+
+    parent_sha, files_lines = get_fix_details(owner, repo, sha, github_token)
+
+    if not parent_sha:
+        return sha, set()
+
+    local_guilty = set()
+    for file_path, line_numbers in files_lines:
+        shas = get_blame_sha(
+            owner, repo, parent_sha,
+            file_path, line_numbers, github_token
+        )
+        local_guilty.update(shas)
+
+    return sha, local_guilty
+
+# MAIN PIPELINE
 def get_szz_guilty_shas(commits_df, github_token):
     guilty_shas, processed_shas = load_checkpoint()
+
+    # Lock pour protéger les sets partagés (écrits depuis plusieurs threads)
+    lock = threading.Lock()
 
     for repo_name, group in commits_df.groupby("repo"):
         owner, repo = repo_name.split("/")
         fix_commits = group[group["message"].apply(is_fix_commit)]
         total_fix   = len(fix_commits)
-        already     = fix_commits["sha"].isin(processed_shas).sum()
+
+        with lock:
+            already = fix_commits["sha"].isin(processed_shas).sum()
 
         log.info(f"\n[{repo_name}] {total_fix} fix commits — "
                  f"{already} déjà traités, {total_fix - already} restants")
 
-        for i, (_, row) in enumerate(fix_commits.iterrows()):
-            sha = row["sha"]
+        # Filtrer les commits déjà traités avant de soumettre
+        pending_rows = [
+            row for _, row in fix_commits.iterrows()
+            if row["sha"] not in processed_shas
+        ]
 
-            if sha in processed_shas:
-                continue
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {
+                executor.submit(
+                    process_fix_commit, owner, repo, row, github_token
+                ): row["sha"]
+                for row in pending_rows
+            }
 
-            log.info(f"  [{i+1}/{total_fix}] {sha[:7]} ({repo_name})")
+            completed = 0
+            for future in as_completed(futures):
+                try:
+                    sha, local_guilty = future.result()
+                except Exception as e:
+                    sha = futures[future]
+                    log.warning(f"    Erreur inattendue pour {sha[:7]} : {e}")
+                    local_guilty = set()
 
-            parent_sha, files_lines = get_fix_details(owner, repo, sha, github_token)
+                # Mise à jour thread-safe des sets partagés
+                with lock:
+                    guilty_shas.update(local_guilty)
+                    processed_shas.add(sha)
+                    completed += 1
 
-            if not parent_sha:
-                processed_shas.add(sha)
-                save_checkpoint(guilty_shas, processed_shas)
-                continue
+                    log.info(f"   [{completed}/{len(pending_rows)}] "
+                             f"{sha[:7]} — +{len(local_guilty)} coupables")
 
-            for file_path, line_numbers in files_lines:
-                shas = get_blame_sha(
-                    owner, repo, parent_sha,
-                    file_path, line_numbers, github_token
-                )
-                guilty_shas.update(shas)
-
-            processed_shas.add(sha)
-
-            # Checkpoint toutes les 10 fix commits
-            if len(processed_shas) % 10 == 0:
-                save_checkpoint(guilty_shas, processed_shas)
-                log.info(f"  💾 Checkpoint — {len(guilty_shas)} coupables / "
-                         f"{len(processed_shas)} traités")
+                    # Checkpoint toutes les 10 fix commits
+                    if len(processed_shas) % 10 == 0:
+                        save_checkpoint(guilty_shas, processed_shas)
+                        log.info(f"  💾 Checkpoint — {len(guilty_shas)} coupables / "
+                                 f"{len(processed_shas)} traités")
 
     save_checkpoint(guilty_shas, processed_shas)
     log.info(f"\nTotal commits coupables : {len(guilty_shas)}")
     return guilty_shas
+
 
 def label_with_szz(commits_df, guilty_shas):
     commits_df["introduced_bug_szz"] = commits_df["sha"].apply(
@@ -249,7 +297,7 @@ def label_with_szz(commits_df, guilty_shas):
     )
     return commits_df
 
-# ─── ENTRY POINT ──────────────────────────────────────────
+# ENTRY POINT
 if __name__ == "__main__":
     token = os.getenv("GITHUB_TOKEN")
 
