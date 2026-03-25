@@ -4,6 +4,7 @@ import json
 import sys
 import os
 import requests
+from typing import Optional
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -25,13 +26,19 @@ def load():
     print("Modèle chargé")
 
 
-def get_recent_commits(owner: str, repo: str, sha: str, github_token: str, limit: int = 20):
+def get_recent_commits(
+    owner: str,
+    repo: str,
+    sha: str,
+    github_token: Optional[str],
+    limit: int = 20,
+):
     """Récupère les commits précédents pour construire la séquence."""
     url     = f"https://api.github.com/repos/{owner}/{repo}/commits"
-    headers = {"Authorization": f"token {github_token}"}
+    headers = {"Authorization": f"token {github_token}"} if github_token else {}
     params  = {"sha": sha, "per_page": limit + 1}
 
-    response = requests.get(url, headers=headers, params=params)
+    response = requests.get(url, headers=headers or None, params=params)
     if response.status_code != 200:
         return []
 
@@ -95,7 +102,7 @@ def fetch_commit_vector(args):
     except Exception:
         return c["sha"], np.zeros(20, dtype=np.float32)
 
-def predict_commit(repo_url: str, sha: str, github_token: str):
+def predict_commit(repo_url: str, sha: str, github_token: Optional[str]):
     if model is None:
         load()
 
@@ -174,15 +181,15 @@ def predict_commit(repo_url: str, sha: str, github_token: str):
         }
     }
 
-def predict_history(repo_url: str, github_token: str, limit: int = 50):
+def predict_history(repo_url: str, github_token: Optional[str], limit: int = 50):
     owner, repo = parse_github_url(repo_url)
     seq_len     = metadata["sequence_length"]
 
     # 1. Récupérer plus de commits que demandé pour avoir l'historique
     url      = f"https://api.github.com/repos/{owner}/{repo}/commits"
-    headers  = {"Authorization": f"token {github_token}"}
+    headers = {"Authorization": f"token {github_token}"} if github_token else {}
     params   = {"per_page": limit + seq_len}
-    response = requests.get(url, headers=headers, params=params)
+    response = requests.get(url, headers=headers or None, params=params)
 
     if response.status_code != 200:
         raise Exception(f"GitHub API error: {response.status_code}")

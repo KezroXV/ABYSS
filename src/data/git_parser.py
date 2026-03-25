@@ -28,10 +28,11 @@ def parse_github_url(repo_url):
 
 def get_commit_data(owner, repo, sha, github_token):
   url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}"
-  headers = {
-    "Authorization": f"Bearer {github_token}"
-  }
-  response = requests.get(url, headers=headers)
+  headers = {}
+  if github_token:
+    headers["Authorization"] = f"Bearer {github_token}"
+
+  response = requests.get(url, headers=headers or None)
   
   if response.status_code == 200:
     return response.json()
@@ -58,7 +59,9 @@ def extract_file_metrics(commit_data):
   return files_changed, lines_added, lines_removed
 
 def get_avg_complexity(owner, repo, sha, files, github_token):
-  headers = {"Authorization" : f"Bearer {github_token}"}
+  headers = {}
+  if github_token:
+    headers = {"Authorization": f"Bearer {github_token}"}
   complexities = []
 
   for file in files: 
@@ -68,7 +71,7 @@ def get_avg_complexity(owner, repo, sha, files, github_token):
         continue
 
       url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={sha}"
-      response = requests.get(url, headers=headers)
+      response = requests.get(url, headers=headers or None)
 
       if response.status_code != 200:
         continue
