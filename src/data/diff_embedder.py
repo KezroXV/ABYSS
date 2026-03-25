@@ -172,7 +172,16 @@ if __name__ == "__main__":
     import pandas as pd
 
     token = os.getenv("GITHUB_TOKEN")
-    df    = pd.read_csv("data/processed/commits_features.csv")
 
-    print(f"Generating embeddings for {len(df)} commits...")
-    generate_embeddings_for_dataset(df, token)
+    df_old = pd.read_csv("data/raw/commits_all_repos.csv")
+    df_new = pd.read_csv("data/raw/commits_new_repos.csv")
+    df     = pd.concat([df_old, df_new], ignore_index=True).drop_duplicates(subset=["sha"])
+
+    print(f"Total commits to process: {len(df)}")
+    print(df["repo"].value_counts())
+
+    generate_embeddings_for_dataset(
+        df,
+        token,
+        output_path="data/processed/commit_embeddings.json"
+    )
