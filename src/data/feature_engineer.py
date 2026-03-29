@@ -177,7 +177,7 @@ def run_feature_engineering(input_path, output_path):
 
 if __name__ == "__main__":
     df = run_feature_engineering(
-        input_path="data/processed/commits_hybrid_labeled.csv",
+        input_path="data/processed/commits_clean.csv",
         output_path="data/processed/commits_features.csv"
     )
     
