@@ -118,11 +118,11 @@ class DataPreprocessor:
     def main(self):
         token = os.getenv("GITHUB_TOKEN")
 
-        df = self.load_data("data/processed/commits_hybrid_labeled.csv")
+        df = self.load_data("data/processed/commits_szz_labeled.csv")
         df = self.clean_data(df)
         df = self.extract_temporal_features(df)
         df = self.add_commit_metrics(df, token)
-        self.save_clean_data(df, "data/processed/commits_clean.csv")
+        self.save_clean_data(df, "data/processed/commits_hybrid_labeled.csv")
 
         clear_checkpoint()
 
