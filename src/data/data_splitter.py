@@ -43,16 +43,16 @@ def verify_splits(df_train, df_val, df_test):
     print(f"Test  : {len(df_test)} commits")
 
     print("\n=== Plages de dates ===")
-    print(f"Train : {df_train[DATE_COL].min()} → {df_train[DATE_COL].max()}")
-    print(f"Val   : {df_val[DATE_COL].min()} → {df_val[DATE_COL].max()}")
-    print(f"Test  : {df_test[DATE_COL].min()} → {df_test[DATE_COL].max()}")
+    print(f"Train : {df_train[DATE_COL].min()} -> {df_train[DATE_COL].max()}")
+    print(f"Val   : {df_val[DATE_COL].min()} -> {df_val[DATE_COL].max()}")
+    print(f"Test  : {df_test[DATE_COL].min()} -> {df_test[DATE_COL].max()}")
 
     print("\n=== Distribution du label ===")
     for name, df in [("Train", df_train), ("Val", df_val), ("Test", df_test)]:
         counts = df[LABEL_COL].value_counts()
         total = len(df)
         pct = round(counts.get(1, 0) / total * 100, 1)
-        print(f"{name} → {counts.get(1, 0)} bugs / {total} commits ({pct}%)")
+        print(f"{name} -> {counts.get(1, 0)} bugs / {total} commits ({pct}%)")
 
     print("\n=== Vérification chronologique ===")
     assert df_train[DATE_COL].max() <= df_val[DATE_COL].min(), " Fuite train → val"
