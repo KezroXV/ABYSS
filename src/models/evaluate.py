@@ -72,8 +72,8 @@ def evaluate_test():
     print(f"Accuracy  : {accuracy:.4f}")
     print(f"\nTP : {int(tp)}  FP : {int(fp)}")
     print(f"FN : {int(fn)}  TN : {int(tn)}")
-    print(f"\nSur {int(tp+fn)} vrais bugs → modèle en trouve {int(tp)} ({recall*100:.1f}%)")
-    print(f"Sur {int(tp+fp)} alertes    → {int(tp)} sont réels ({precision*100:.1f}%)")
+    print(f"\nSur {int(tp+fn)} vrais bugs -> modele en trouve {int(tp)} ({recall*100:.1f}%)")
+    print(f"Sur {int(tp+fp)} alertes   -> {int(tp)} sont reels ({precision*100:.1f}%)")
 
     print("\n=== Tradeoff Precision/Recall selon le threshold ===")
     for t in np.arange(0.30, 0.80, 0.05):
